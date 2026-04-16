@@ -384,4 +384,130 @@ hooks:
         let errorOutput = String(data: stderr.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
         XCTAssertEqual(process.terminationStatus, 0, errorOutput, file: file, line: line)
     }
+
+    // MARK: - Opencode config merge (issue #89 — do not clobber user-authored config)
+
+    func testMergeOpencodePluginRefCreatesMinimalConfigWhenFileAbsent() throws {
+        let merged = try XCTUnwrap(
+            ConfigInstaller.mergeOpencodePluginRef(
+                originalContents: nil,
+                pluginRef: "file:///tmp/codeisland.js",
+                identifier: "codeisland"
+            )
+        )
+        let json = try XCTUnwrap(try JSONSerialization.jsonObject(with: Data(merged.utf8)) as? [String: Any])
+        XCTAssertEqual(json["$schema"] as? String, "https://opencode.ai/config.json")
+        XCTAssertEqual(json["plugin"] as? [String], ["file:///tmp/codeisland.js"])
+    }
+
+    func testMergeOpencodePluginRefPreservesUnrelatedKeysAndOtherPlugins() throws {
+        let original = """
+        {
+          "model": "anthropic/claude-sonnet-4",
+          "theme": "tokyonight",
+          "plugin": ["file:///user/other-plugin.js"],
+          "autoshare": false
+        }
+        """
+        let merged = try XCTUnwrap(
+            ConfigInstaller.mergeOpencodePluginRef(
+                originalContents: original,
+                pluginRef: "file:///tmp/codeisland.js",
+                identifier: "codeisland"
+            )
+        )
+        let json = try XCTUnwrap(try JSONSerialization.jsonObject(with: Data(merged.utf8)) as? [String: Any])
+        XCTAssertEqual(json["model"] as? String, "anthropic/claude-sonnet-4")
+        XCTAssertEqual(json["theme"] as? String, "tokyonight")
+        XCTAssertEqual(json["autoshare"] as? Bool, false)
+        let plugins = try XCTUnwrap(json["plugin"] as? [String])
+        XCTAssertTrue(plugins.contains("file:///user/other-plugin.js"))
+        XCTAssertTrue(plugins.contains("file:///tmp/codeisland.js"))
+    }
+
+    func testMergeOpencodePluginRefDeduplicatesOurOwnRefs() throws {
+        let original = """
+        {
+          "plugin": [
+            "file:///old/codeisland.js",
+            "file:///some/vibe-island.js",
+            "file:///user/other.js"
+          ]
+        }
+        """
+        let merged = try XCTUnwrap(
+            ConfigInstaller.mergeOpencodePluginRef(
+                originalContents: original,
+                pluginRef: "file:///new/codeisland.js",
+                identifier: "codeisland"
+            )
+        )
+        let json = try XCTUnwrap(try JSONSerialization.jsonObject(with: Data(merged.utf8)) as? [String: Any])
+        let plugins = try XCTUnwrap(json["plugin"] as? [String])
+        XCTAssertEqual(plugins.filter { $0.contains("codeisland") }.count, 1)
+        XCTAssertFalse(plugins.contains { $0.contains("vibe-island") })
+        XCTAssertTrue(plugins.contains("file:///user/other.js"))
+        XCTAssertTrue(plugins.contains("file:///new/codeisland.js"))
+    }
+
+    func testMergeOpencodePluginRefReturnsNilOnMalformedJSON() {
+        // Unterminated object — installer MUST refuse to overwrite instead of
+        // nuking the user's config.
+        let malformed = "{\n  \"model\": \"sonnet\",\n  \"plugin\": [\n"
+        XCTAssertNil(
+            ConfigInstaller.mergeOpencodePluginRef(
+                originalContents: malformed,
+                pluginRef: "file:///tmp/codeisland.js",
+                identifier: "codeisland"
+            )
+        )
+    }
+
+    func testMergeOpencodePluginRefReturnsNilWhenRootIsNotAnObject() {
+        // User accidentally wrote a top-level array instead of object.
+        let array = "[\"not\", \"an\", \"object\"]"
+        XCTAssertNil(
+            ConfigInstaller.mergeOpencodePluginRef(
+                originalContents: array,
+                pluginRef: "file:///tmp/codeisland.js",
+                identifier: "codeisland"
+            )
+        )
+    }
+
+    func testRemoveOpencodePluginRefKeepsUserKeysAndOtherPlugins() throws {
+        let original = """
+        {
+          "model": "sonnet",
+          "plugin": ["file:///tmp/codeisland.js", "file:///user/other.js"]
+        }
+        """
+        let cleaned = try XCTUnwrap(
+            ConfigInstaller.removeOpencodePluginRef(
+                originalContents: original,
+                identifier: "codeisland"
+            )
+        )
+        let json = try XCTUnwrap(try JSONSerialization.jsonObject(with: Data(cleaned.utf8)) as? [String: Any])
+        XCTAssertEqual(json["model"] as? String, "sonnet")
+        XCTAssertEqual(json["plugin"] as? [String], ["file:///user/other.js"])
+    }
+
+    func testRemoveOpencodePluginRefReturnsNilOnMalformedJSON() {
+        XCTAssertNil(
+            ConfigInstaller.removeOpencodePluginRef(
+                originalContents: "{ not valid json",
+                identifier: "codeisland"
+            )
+        )
+    }
+
+    func testRemoveOpencodePluginRefReturnsNilWhenFileAbsent() {
+        XCTAssertNil(
+            ConfigInstaller.removeOpencodePluginRef(
+                originalContents: nil,
+                identifier: "codeisland"
+            )
+        )
+    }
 }
