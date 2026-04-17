@@ -2446,6 +2446,7 @@ private let cliIconFiles: [String: String] = [
     "qwen": "qwen",
     "kimi": "kimi",
     "opencode": "opencode",
+    "pi": "pi",
 ]
 
 private var cliIconCache: [String: NSImage] = [:]

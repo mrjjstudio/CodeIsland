@@ -451,6 +451,7 @@ private struct HooksPage: View {
             cliStatuses[cli.source] = ConfigInstaller.isInstalled(source: cli.source)
         }
         cliStatuses["opencode"] = ConfigInstaller.isInstalled(source: "opencode")
+        cliStatuses["pi"] = ConfigInstaller.isInstalled(source: "pi")
     }
 
     private func statusText(installed: Bool, exists: Bool) -> String {
@@ -485,6 +486,18 @@ private struct HooksPage: View {
                     exists: ocExists
                 ) { _ in refreshCLIStatuses() }
                 .id("opencode-\(refreshKey)")
+                // Pi (extension-based, not hooks)
+                let piInstalled = cliStatuses["pi"] ?? false
+                let piExists = ConfigInstaller.cliExists(source: "pi")
+                CLIStatusRow(
+                    name: "Pi",
+                    source: "pi",
+                    configPath: "~/.pi/agent/settings.json",
+                    fullPath: NSHomeDirectory() + "/.pi/agent/settings.json",
+                    installed: piInstalled,
+                    exists: piExists
+                ) { _ in refreshCLIStatuses() }
+                .id("pi-\(refreshKey)")
             }
 
             Section("Custom CLIs") {
@@ -561,6 +574,9 @@ private struct HooksPage: View {
                         }
                         if ConfigInstaller.cliExists(source: "opencode") {
                             UserDefaults.standard.set(true, forKey: "cli_enabled_opencode")
+                        }
+                        if ConfigInstaller.cliExists(source: "pi") {
+                            UserDefaults.standard.set(true, forKey: "cli_enabled_pi")
                         }
                         if ConfigInstaller.install() {
                             refreshCLIStatuses()
@@ -896,6 +912,7 @@ private struct MascotsPage: View {
         ("QwenBot", "qwen", "Qwen Code", Color(red: 0.486, green: 0.228, blue: 0.929)),
         ("KimiBot", "kimi", "Kimi Code CLI", Color(red: 0.29, green: 0.56, blue: 1.0)),
         ("OpBot", "opencode", "OpenCode", Color(red: 0.55, green: 0.55, blue: 0.57)),
+        ("PiBot", "pi", "Pi", Color(red: 0.30, green: 0.85, blue: 0.95)),
     ]
 
     var body: some View {

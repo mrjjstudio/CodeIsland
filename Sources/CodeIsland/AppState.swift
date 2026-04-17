@@ -1734,6 +1734,7 @@ final class AppState {
             ("copilot", "\(home)/.copilot/session-state"),
             ("opencode", "\(home)/.local/share/opencode"),
             ("kimi", "\(home)/.kimi/sessions"),
+            ("pi", "\(home)/.pi/agent/sessions"),
         ]
         let fm = FileManager.default
         return candidates.compactMap { source, path in

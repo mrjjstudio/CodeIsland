@@ -496,6 +496,12 @@ struct ConfigInstaller {
     private static let opencodeConfigPath = NSHomeDirectory() + "/.config/opencode/config.json"
     private static let opencodeConfigPathNew = NSHomeDirectory() + "/.config/opencode/opencode.json"
 
+    // MARK: - Pi extension paths
+
+    private static let piExtensionsDir = NSHomeDirectory() + "/.pi/agent/extensions"
+    private static let piExtensionPath = NSHomeDirectory() + "/.pi/agent/extensions/codeisland.ts"
+    private static let piSettingsPath = NSHomeDirectory() + "/.pi/agent/settings.json"
+
     // MARK: - Install / Uninstall
 
     static func install() -> Bool {
@@ -536,6 +542,11 @@ struct ConfigInstaller {
             if !installOpencodePlugin(fm: fm) { ok = false }
         }
 
+        // Install Pi extension
+        if isEnabled(source: "pi") {
+            if !installPiExtension(fm: fm) { ok = false }
+        }
+
         return ok
     }
 
@@ -556,6 +567,7 @@ struct ConfigInstaller {
         }
 
         uninstallOpencodePlugin(fm: fm)
+        uninstallPiExtension(fm: fm)
     }
 
     /// Check if Claude Code hooks are installed
@@ -568,6 +580,7 @@ struct ConfigInstaller {
     /// Check if a specific CLI's hooks are installed
     static func isInstalled(source: String) -> Bool {
         if source == "opencode" { return isOpencodePluginInstalled(fm: FileManager.default) }
+        if source == "pi" { return isPiExtensionInstalled(fm: FileManager.default) }
         if source == "traecli" { return isTraecliHooksInstalled(fm: FileManager.default) }
         guard let cli = allCLIs.first(where: { $0.source == source }) else { return false }
         return isHooksInstalled(for: cli, fm: FileManager.default)
@@ -576,6 +589,7 @@ struct ConfigInstaller {
     /// Check if CLI directory exists (tool is installed on this machine)
     static func cliExists(source: String) -> Bool {
         if source == "opencode" { return FileManager.default.fileExists(atPath: NSHomeDirectory() + "/.config/opencode") }
+        if source == "pi" { return FileManager.default.fileExists(atPath: NSHomeDirectory() + "/.pi/agent") }
         if source == "copilot" { return FileManager.default.fileExists(atPath: NSHomeDirectory() + "/.copilot") }
         guard let cli = allCLIs.first(where: { $0.source == source }) else { return false }
         return FileManager.default.fileExists(atPath: cli.dirPath)
@@ -602,6 +616,9 @@ struct ConfigInstaller {
             if source == "opencode" {
                 return installOpencodePlugin(fm: fm)
             }
+            if source == "pi" {
+                return installPiExtension(fm: fm)
+            }
             guard let cli = allCLIs.first(where: { $0.source == source }) else { return false }
             if cli.source == "claude" {
                 return installClaudeHooks(cli: cli, fm: fm)
@@ -615,6 +632,8 @@ struct ConfigInstaller {
         } else {
             if source == "opencode" {
                 uninstallOpencodePlugin(fm: fm)
+            } else if source == "pi" {
+                uninstallPiExtension(fm: fm)
             } else if let cli = allCLIs.first(where: { $0.source == source }) {
                 if cli.source == "traecli" {
                     uninstallTraecliHooks(fm: fm)
@@ -670,6 +689,12 @@ struct ConfigInstaller {
            fm.fileExists(atPath: (opencodeConfigPath as NSString).deletingLastPathComponent),
            !isOpencodePluginInstalled(fm: fm) {
             if installOpencodePlugin(fm: fm) { repaired.append("OpenCode") }
+        }
+        // Pi extension
+        if isEnabled(source: "pi"),
+           fm.fileExists(atPath: NSHomeDirectory() + "/.pi/agent"),
+           !isPiExtensionInstalled(fm: fm) {
+            if installPiExtension(fm: fm) { repaired.append("Pi") }
         }
         return repaired
     }
@@ -1710,5 +1735,134 @@ struct ConfigInstaller {
             }
         }
         return false
+    }
+
+    // MARK: - Pi Extension
+
+    /// The TS extension source — embedded as resource
+    private static func piExtensionSource() -> String? {
+        if let url = Bundle.appModule.url(forResource: "codeisland-pi", withExtension: "ts", subdirectory: "Resources"),
+           let src = try? String(contentsOf: url) { return src }
+        if let url = Bundle.appModule.url(forResource: "codeisland-pi", withExtension: "ts"),
+           let src = try? String(contentsOf: url) { return src }
+        return nil
+    }
+
+    /// Current Pi extension version — bump when codeisland-pi.ts changes
+    private static let piExtensionVersion = "v2"
+
+    @discardableResult
+    private static func installPiExtension(fm: FileManager) -> Bool {
+        // Only install if pi agent directory exists
+        let agentDir = NSHomeDirectory() + "/.pi/agent"
+        guard fm.fileExists(atPath: agentDir) else { return true } // not installed, skip silently
+
+        // Write extension TS file
+        guard let source = piExtensionSource() else { return false }
+        try? fm.createDirectory(atPath: piExtensionsDir, withIntermediateDirectories: true)
+        guard fm.createFile(atPath: piExtensionPath, contents: Data(source.utf8)) else { return false }
+
+        // Register in settings.json extensions array
+        let originalContents: String? = fm.contents(atPath: piSettingsPath)
+            .flatMap { String(data: $0, encoding: .utf8) }
+
+        guard let merged = mergePiExtensionRef(
+            originalContents: originalContents,
+            extensionPath: piExtensionPath
+        ) else {
+            // Existing config is unparseable — refuse to overwrite.
+            return false
+        }
+
+        if let original = originalContents, !original.isEmpty {
+            backupPiSettings(original: original, fm: fm)
+        }
+        fm.createFile(atPath: piSettingsPath, contents: Data(merged.utf8))
+        return true
+    }
+
+    private static func uninstallPiExtension(fm: FileManager) {
+        try? fm.removeItem(atPath: piExtensionPath)
+
+        // Remove extension ref from settings.json
+        guard let contents = fm.contents(atPath: piSettingsPath)
+            .flatMap({ String(data: $0, encoding: .utf8) }),
+              let cleaned = removePiExtensionRef(originalContents: contents)
+        else { return }
+        backupPiSettings(original: contents, fm: fm)
+        fm.createFile(atPath: piSettingsPath, contents: Data(cleaned.utf8))
+    }
+
+    private static func isPiExtensionInstalled(fm: FileManager) -> Bool {
+        guard fm.fileExists(atPath: piExtensionPath) else { return false }
+        // Check version; outdated extension triggers re-install.
+        if let existing = fm.contents(atPath: piExtensionPath),
+           let str = String(data: existing, encoding: .utf8) {
+            return str.contains("// version: \(piExtensionVersion)")
+        }
+        return false
+    }
+
+    /// Merge our extension path into pi settings.json.
+    /// Returns new file contents, or nil if existing contents are unparseable.
+    static func mergePiExtensionRef(
+        originalContents: String?,
+        extensionPath: String
+    ) -> String? {
+        var config: [String: Any] = [:]
+        if let contents = originalContents {
+            let stripped = stripJSONComments(contents)
+            guard let data = stripped.data(using: .utf8),
+                  let parsed = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+                return nil
+            }
+            config = parsed
+        }
+
+        var extensions = config["extensions"] as? [String] ?? []
+        extensions.removeAll { $0.contains("codeisland") }
+        extensions.append(extensionPath)
+        config["extensions"] = extensions
+
+        guard let data = try? JSONSerialization.data(withJSONObject: config, options: [.prettyPrinted, .sortedKeys]),
+              let merged = String(data: data, encoding: .utf8) else {
+            return nil
+        }
+        return merged
+    }
+
+    /// Remove our extension reference from pi settings.json.
+    static func removePiExtensionRef(originalContents: String?) -> String? {
+        guard let contents = originalContents else { return nil }
+        let stripped = stripJSONComments(contents)
+        guard let data = stripped.data(using: .utf8),
+              var config = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return nil
+        }
+        guard var extensions = config["extensions"] as? [String],
+              extensions.contains(where: { $0.contains("codeisland") }) else {
+            return nil
+        }
+        extensions.removeAll { $0.contains("codeisland") }
+        config["extensions"] = extensions.isEmpty ? nil : extensions
+        guard let jsonData = try? JSONSerialization.data(withJSONObject: config, options: [.prettyPrinted, .sortedKeys]),
+              let cleaned = String(data: jsonData, encoding: .utf8) else {
+            return nil
+        }
+        return cleaned
+    }
+
+    private static func backupPiSettings(original: String, fm: FileManager) {
+        let dir = (piSettingsPath as NSString).deletingLastPathComponent
+        let name = (piSettingsPath as NSString).lastPathComponent
+        if let entries = try? fm.contentsOfDirectory(atPath: dir),
+           entries.contains(where: { $0.hasPrefix(name + ".codeisland.bak.") }) {
+            return
+        }
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withYear, .withMonth, .withDay, .withTime]
+        let stamp = formatter.string(from: Date()).replacingOccurrences(of: ":", with: "")
+        let backupPath = "\(piSettingsPath).codeisland.bak.\(stamp)"
+        fm.createFile(atPath: backupPath, contents: Data(original.utf8))
     }
 }

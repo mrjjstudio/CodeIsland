@@ -29,6 +29,7 @@ public struct SessionSnapshot {
         "hermes",
         "qwen",
         "kimi",
+        "pi",
     ]
 
     public var status: AgentStatus = .idle
@@ -86,6 +87,9 @@ public struct SessionSnapshot {
             "qwencode": "qwen",
             "kimi-cli": "kimi",
             "kimicli": "kimi",
+            "pi-cli": "pi",
+            "picli": "pi",
+            "pi-coding-agent": "pi",
             "codebuddycn": "codybuddycn",
             "codybuddy-cn": "codybuddycn",
             "step-fun": "stepfun",
@@ -104,6 +108,7 @@ public struct SessionSnapshot {
         if canonical.hasPrefix("hermes") { return "hermes" }
         if canonical.hasPrefix("qwen") { return "qwen" }
         if canonical.hasPrefix("kimi") { return "kimi" }
+        if canonical.hasPrefix("pi") { return "pi" }
         if canonical.hasPrefix("codybuddycn") || canonical.hasPrefix("codebuddycn") { return "codybuddycn" }
         if canonical.hasPrefix("stepfun") { return "stepfun" }
         if canonical.hasPrefix("traecn") { return "traecn" }
@@ -255,6 +260,7 @@ public struct SessionSnapshot {
         case "hermes": return "Hermes"
         case "qwen": return "Qwen Code"
         case "kimi": return "Kimi Code CLI"
+        case "pi": return "Pi"
         default:
             if let customName = Self.loadCustomSourceNames()[source] {
                 return customName
